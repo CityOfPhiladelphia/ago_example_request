@@ -4,8 +4,9 @@ import pandas as pd
 import time
 import os
 
-URL = 'https://services.arcgis.com/fLeGjb7u4uXqeF9q/ArcGIS/rest/services/TRADE_LICENSES_PWD/FeatureServer/0/query'
-FILENAME = 'TRADE_LICENSES_PWD.csv'
+DEFAULT_URL = 'https://services.arcgis.com/fLeGjb7u4uXqeF9q/ArcGIS/rest/services/TRADE_LICENSES_PWD/FeatureServer/0/query'
+DEFAULT_FILENAME = 'TRADE_LICENSES_PWD.csv'
+DEFAULT_DATE_COLS = ('REQUEST_DATE', 'ISSUEDATE', 'EXPIRATIONDATE')
 
 def generateToken(username, password):
     """
@@ -25,10 +26,12 @@ def generateToken(username, password):
         try: 
             rv['error']
             print(f'JSON return value: {rv}')
-            raise KeyError('Token not found')
+            print('Token not found')
+            quit()
         except Exception as e: 
             print('Unknown exception raised')
-            raise e
+            print(e)
+            quit()
 
 def get_data(url, params, data_designation):
     '''
@@ -46,7 +49,7 @@ def get_data(url, params, data_designation):
     except KeyError: # Checks for no data
         raise KeyError(text)
 
-def pull_data(url, token, filename): 
+def pull_data(url, token, filename, date_cols): 
     '''
     Successively calls get_data() for the max number of records allowed in each data pull
     '''
@@ -66,7 +69,21 @@ def pull_data(url, token, filename):
         
         data = pd.json_normalize(rv_text)
         data.columns = data.columns.str.removeprefix('attributes.')
+        for col in date_cols: 
+            try: 
+                if pd.api.types.is_integer_dtype(data[col]): 
+                    try: 
+                        data[col] = pd.to_datetime(data[col], unit='ms')
+                    except Exception as e: 
+                        print(f'    Unable to coerce column "{col}" to datetime')
+                else: 
+                    print(f'    Unable to coerce column "{col}" to datetime')
+            except KeyError as e: 
+                raise KeyError(f'{e} is not a named column in dataset')
         if x == -1: 
+            if date_cols != (): 
+                print()
+                print(f'Coercing the following columns to datetime format:\n{date_cols}')
             data.to_csv(filename, index=False, mode='w')
         else: 
             data.to_csv(filename, index=False, mode='a')
@@ -80,25 +97,36 @@ def pull_data(url, token, filename):
 @click.command()
 @click.option('--username', help='ArcGIS username login with admin access')
 @click.option('--password', help='Account password')
-@click.option('--url', default=URL, show_default=True, 
+@click.option('--url', default=DEFAULT_URL, show_default=True, 
     help='URL of ArcGIS Resource to access - defaults to URL posted at the top of this script')
-@click.option('--filename', default=FILENAME, show_default=True, 
+@click.option('--filename', default=DEFAULT_FILENAME, show_default=True, 
     help='Name of CSV file to create with exported data')
-def main(username, password, url, filename): 
+@click.option('--date_col', '-d', multiple=True, default=DEFAULT_DATE_COLS, show_default=True, 
+    help='A data column of type "esriFieldTypeDate" that should be converted to human-readable datetimes. Must be written in form "-d col_1 -d col_2 -d col_3" etc.')
+def main(username, password, url, filename, date_col): 
     '''
     \b
     This module gets all of the data from an ArcGIS Online REST API service; the 
-    default is TRADE_LICENSES_PWD. 
-    The script first requests an AGO token, then uses that token to download the relevant 
-    data. 
+    default is TRADE_LICENSES_PWD. The script first requests an AGO token, then 
+    uses that token to download the relevant data. 
+    
     This script requires a username and password with sufficient privileges to 
     receive a token (standard AGO accounts authenticated through AD likely will not work). 
-    An advanced user can input a different URL and filename (and username and password 
+    
+    An advanced user can 
+    1. Input a different URL and filename (and username and password 
     if necessary) to access other AGO resources that utilize the same process by passing 
-    them as command line arguments.
+    them as command line arguments. 
+    2. Specify for that URL and filename which columns should be converted from "esriFieldTypeDate"
+    to human-readable datetimes. 
     '''
+    if url != DEFAULT_URL: 
+        if filename == DEFAULT_FILENAME: 
+            raise ValueError(f'Custom URL presented, but filename remains "{DEFAULT_FILENAME}"')
+        if date_col == DEFAULT_DATE_COLS: 
+            date_col = ()
     token = generateToken(username, password)
-    pull_data(url, token, filename)
+    pull_data(url, token, filename, date_col)
     print(f'Script completed - file saved to {os.getcwd()}\\{filename}')
 
 if __name__ == '__main__': 
