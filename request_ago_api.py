@@ -33,23 +33,28 @@ def generateToken(username, password):
             print(e)
             quit()
 
-def get_data(url, params, data_designation):
+def get_data(url, params, data_designation, object_id_field: bool):
     '''
-    Gets data from specified URL and JSON decodes
+    Gets data from specified URL and either
+    1. Returns Object ID field name if object_id_field = True, or 
+    2. Returns data decoded from JSON 
     '''
     r = requests.get(url, params=params)
     if r.status_code != 200:
         raise Exception(f'Status Code: {r.status_code} - Reason: {r.reason}')
     try:
         text = r.json()
-        return text[data_designation]
+        if object_id_field: 
+            return text['objectIdFieldName']
+        else: 
+            return text[data_designation]
     except requests.exceptions.JSONDecodeError:
         print(f'Text: {r.text}')
         raise Exception('json module unable to decode text')
     except KeyError: # Checks for no data
         raise KeyError(text)
 
-def pull_data(url, token, filename, date_cols): 
+def pull_data(url, token, filename, date_cols, object_id_field): 
     '''
     Successively calls get_data() for the max number of records allowed in each data pull
     '''
@@ -58,12 +63,12 @@ def pull_data(url, token, filename, date_cols):
     start = time.time()
     while True:
         params = {
-            'where': f'OBJECTID > {x}',
+            'where': f'{object_id_field} > {x}',
             'outFields': '*', 
             'token': token, 
             'f': 'pjson'
             }
-        rv_text = get_data(url, params, 'features')
+        rv_text = get_data(url, params, 'features', False)
         if rv_text == []: 
             break
         
@@ -87,8 +92,8 @@ def pull_data(url, token, filename, date_cols):
             data.to_csv(filename, index=False, mode='w')
         else: 
             data.to_csv(filename, index=False, mode='a')
-        x = data['OBJECTID'].max()
-        print(f'    Record Number: {x}')
+        x = data[object_id_field].max()
+        print(f'    {object_id_field} Number: {x}')
         
     end = time.time()
 
@@ -126,7 +131,16 @@ def main(username, password, url, filename, date_col):
         if date_col == DEFAULT_DATE_COLS: 
             date_col = ()
     token = generateToken(username, password)
-    pull_data(url, token, filename, date_col)
+    unique_id_params = {
+        'where': '1=1', 
+        'outFields': '*', 
+        'returnIdsOnly': 'true', 
+        'returnDistinctValues': 'true', 
+        'f': 'pjson', 
+        'token': token
+    }    
+    object_id_field = get_data(url, unique_id_params, 'objectIds', object_id_field=True)
+    pull_data(url, token, filename, date_col, object_id_field)
     print(f'Script completed - file saved to {os.getcwd()}\\{filename}')
 
 if __name__ == '__main__': 
